@@ -11,6 +11,7 @@ Play Risk of Rain 2 from your survivor's eyes. You see your own body, arms, weap
 - **Steady camera.** Running bob, melee swings and Acrid's gallop are taken out of the view. Moving, jumping and turning are never delayed.
 - **Shots go to the crosshair.** You aim from the eyes, in single player and in multiplayer.
 - **Small muzzle flashes** for your own weapons, so firing doesn't flash half the screen.
+- **No hat brims in your eyes.** Headgear and eye glows (Captain's cap, Bandit's hat, Operator's eyes, head items) are hidden in first person.
 - **Hands off.** First person comes back by itself after respawning and on the next stage, and the game's own camera takes over for the drop pod, cutscenes, death and spectating.
 
 ## How to use
