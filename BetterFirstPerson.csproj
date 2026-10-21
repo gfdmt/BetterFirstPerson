@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>BetterFirstPerson</AssemblyName>
+    <RootNamespace>BetterFirstPerson</RootNamespace>
+    <LangVersion>9.0</LangVersion>
+    <Version>1.1.0</Version>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="src/icon.png" LogicalName="BetterFirstPerson.icon.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BepInEx.Core" Version="5.4.21" />
+    <PackageReference Include="UnityEngine.Modules" Version="2021.3.33" IncludeAssets="compile" />
+    <PackageReference Include="RiskOfRain2.GameLibs" Version="1.*-*" />
+    <PackageReference Include="MMHOOK.RoR2" Version="*" NoWarn="NU1701" />
+    <PackageReference Include="Rune580.Mods.RiskOfRain2.RiskOfOptions" Version="2.8.*" />
+  </ItemGroup>
+
+</Project>
