@@ -150,14 +150,14 @@ namespace BetterFirstPerson
         public void AfterRigCameraState(float gameFov)
         {
             lastGameFov = gameFov;
-            float fov = FieldOfView.Compute(Rig, gameFov, Camera.aspect, out float neutralFov, out float paramsFov);
+            float fov = FieldOfView.Compute(Rig, gameFov, Camera.aspect, out float baseFov);
             Camera.fieldOfView = fov;
             Camera.nearClipPlane = Settings.NearClip.Value;
             if (!fovLogged)
             {
                 fovLogged = true;
-                Plugin.Log.LogInfo("First person FOV: game " + gameFov.ToString("0.0") + " (base " + neutralFov.ToString("0.0") + ", params " + paramsFov.ToString("0.0")
-                    + "), aspect " + Camera.aspect.ToString("0.000") + ", applied vertical " + fov.ToString("0.0") + " = horizontal " + FieldOfView.VerticalToHorizontal(fov, Camera.aspect).ToString("0.0"));
+                Plugin.Log.LogInfo("First person FOV: game " + gameFov.ToString("0.0") + " (base " + baseFov.ToString("0.0") + "), aspect " + Camera.aspect.ToString("0.000")
+                    + ", applied vertical " + fov.ToString("0.0") + " = horizontal " + FieldOfView.VerticalToHorizontal(fov, Camera.aspect).ToString("0.0"));
             }
             float yaw = cameraTransform.eulerAngles.y;
             FirstPersonController.SnapBodyYaw(this, yaw);

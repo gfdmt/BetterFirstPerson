@@ -467,6 +467,27 @@ namespace BetterFirstPerson
                     if (bounds.Contains(headCenter) && bounds.Contains(core)) bodyRenderers.Add(renderer);
                 }
             }
+            // clothes and bodies split from the head (Captain's coat and his body without the head): around the
+            // middle of the body and reaching well below it. A weapon held across the chest is off to the side or
+            // in front, and doesn't reach the legs.
+            float centered = Mathf.Max(0.15f, 0.4f * (body ? body.radius : 0.5f));
+            float belowMiddle = Mathf.Lerp(core.y, feet.y, 0.5f);
+            int clothes = 0;
+            foreach (Renderer renderer in renderers)
+            {
+                if (!(renderer is SkinnedMeshRenderer) || bodyRenderers.Contains(renderer)) continue;
+                Bounds bounds = renderer.bounds;
+                Vector3 offset = bounds.center - core;
+                offset.y = 0f;
+                // standing up like a body, not lying across like a rifle
+                if (bounds.size.y < 0.8f * Mathf.Max(bounds.size.x, bounds.size.z)) continue;
+                bounds.Expand(0.1f);
+                if (!bounds.Contains(core) || offset.magnitude > centered) continue;
+                if (bounds.min.y > belowMiddle && !bounds.Contains(headCenter)) continue;
+                bodyRenderers.Add(renderer);
+                clothes++;
+            }
+            if (clothes > 0) rule += " and " + clothes + " worn around the body";
             if (bodyRenderers.Count == 0 && headTransform)
             {
                 rule = "head bone";
@@ -853,30 +874,32 @@ namespace BetterFirstPerson
 
         // until it is proven, check rendering against the box estimate: if a weapon part's box is clearly on
         // screen for a while but nothing ever gets drawn, rendering doesn't work here
+        // Until it is proven, rendering is checked against the box estimate: anything drawn at all (a weapon,
+        // the body, an item) proves it. It is only given up when parts were clearly on screen for ten seconds of
+        // checks (boxes around the camera don't count) and not a single pixel was ever drawn.
         private static void SelfCheck()
         {
             if (renderVerified) return;
+            bool rendered = bodyGroup != null && bodyGroup.measured && bodyGroup.coverage > 0f;
             float box = 0f;
-            bool rendered = false;
             foreach (FadeGroup group in weaponGroups)
             {
                 box = Mathf.Max(box, group.boxCoverage);
-                if (group.measured && group.coverage > 0f) rendered = true;
+                rendered |= group.measured && group.coverage > 0f;
+            }
+            foreach (FadeGroup group in items)
+                rendered |= group.measured && group.coverage > 0f;
+            if (rendered)
+            {
+                renderVerified = true;
+                Plugin.Log.LogInfo("Rendered screen coverage works (checked against boxes for " + checkVisibleFrames + " frames)");
+                return;
             }
             if (box < 0.05f) return;
             checkVisibleFrames++;
-            if (rendered) checkRenderedFrames++;
-            if (checkVisibleFrames < 90) return;
-            if (checkRenderedFrames > 0)
-            {
-                renderVerified = true;
-                Plugin.Log.LogInfo("Rendered screen coverage works (weapon drawn in " + checkRenderedFrames + " of " + checkVisibleFrames + " checked frames)");
-            }
-            else
-            {
-                mode = MeasureMode.Box;
-                Plugin.Log.LogWarning("Rendered screen coverage stayed empty while the weapon was on screen, using bounding boxes instead");
-            }
+            if (checkVisibleFrames < 600) return;
+            mode = MeasureMode.Box;
+            Plugin.Log.LogWarning("Rendered screen coverage stayed empty while parts were on screen, using bounding boxes instead");
         }
 
         // ---------------------------------------------------------------- box estimate
@@ -891,11 +914,15 @@ namespace BetterFirstPerson
             boxNear = cam.nearClipPlane;
         }
 
+        // a box around the camera says nothing about how much of the screen the mesh in it covers: left out
         private static float BoxCoverage(FadeGroup group)
         {
             float coverage = 0f;
             foreach (FadeRenderer fr in group.renderers)
-                if (fr.measurable && IsDrawn(fr.renderer)) coverage = Mathf.Max(coverage, Coverage(fr));
+            {
+                if (!fr.measurable || !IsDrawn(fr.renderer) || fr.renderer.bounds.Contains(boxCameraPosition)) continue;
+                coverage = Mathf.Max(coverage, Coverage(fr));
+            }
             return coverage;
         }
 

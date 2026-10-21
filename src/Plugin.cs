@@ -18,7 +18,7 @@ namespace BetterFirstPerson
     {
         public const string Guid = "com.gfdmt.betterfirstperson";
         public const string Name = "Better First Person";
-        public const string Version = "1.1.0";
+        public const string Version = "1.1.1";
 
         internal static ManualLogSource Log;
 
