@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Text;
+using RoR2;
 using UnityEngine;
 
 namespace BetterFirstPerson
@@ -24,6 +25,7 @@ namespace BetterFirstPerson
 
         private static readonly string[] weaponWords = { "gun", "weapon", "bow", "rifle", "blade", "sword", "mech", "cannon", "tool", "shield", "staff", "spear", "axe", "hammer", "launcher", "pistol", "club", "knife" };
         private static readonly string[] armWords = { "arm", "shoulder", "clav" };
+        private static readonly string[] gameplayWords = { "hitbox", "hurtbox", "collision", "trigger" };
         private static readonly string[] bodyWords ={ "thigh", "pelvis", "hip", "leg", "calf", "foot", "neck", "head", "cloth", "coat", "cape", "scarf", "hair", "jiggle", "belt", "pack", "tail", "wing", "jet", "light" };
 
         private readonly List<Part> parts = new List<Part>();
@@ -70,14 +72,18 @@ namespace BetterFirstPerson
 
             foreach (Transform bone in spine)
             {
+                // the model's own children are its meshes, hitboxes and hurtboxes, not bones
+                if (bone == model) continue;
                 for (int i = 0; i < bone.childCount; i++)
                 {
                     Transform child = bone.GetChild(i);
                     if (spine.Contains(child) || armRoots.Contains(child)) continue;
                     string name = child.name.ToLowerInvariant();
-                    if (name.StartsWith("ik", System.StringComparison.Ordinal) || Contains(name, bodyWords)) continue;
+                    if (name.StartsWith("ik", System.StringComparison.Ordinal) || Contains(name, bodyWords) || Contains(name, gameplayWords)) continue;
                     Transform[] bones = child.GetComponentsInChildren<Transform>(true);
                     if (!Contains(name, weaponWords) && !(bones.Length >= 3 && HasMuzzle(bones))) continue;
+                    // what hits and gets hit must stay where the game put it
+                    if (child.GetComponent<Renderer>() || child.GetComponentInChildren<HurtBox>(true) || child.GetComponentInChildren<HitBox>(true)) continue;
                     if (bones.Length > 64) System.Array.Resize(ref bones, 64);
                     // an arm that ends in a weapon instead of a hand (MUL-T) turns with the arms
                     bool isArm = Contains(name, armWords);

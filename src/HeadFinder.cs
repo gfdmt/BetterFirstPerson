@@ -13,8 +13,21 @@ namespace BetterFirstPerson
         public float LocalRadius;
         public float FallbackRadius;
         public string Source;
+        // the skeleton's head bone, when there is one: things attached to it are headgear
+        public Transform Bone;
+        // eye bones: the camera never goes behind them (faces that stick out of the head's shape, like Operator's)
+        public Transform[] Eyes = new Transform[0];
 
         public Vector3 Center => Transform.TransformPoint(LocalCenter);
+
+        // how far the frontmost eye is ahead of the head's center along a direction
+        public float EyesAhead(Vector3 center, Vector3 direction)
+        {
+            float ahead = 0f;
+            foreach (Transform eye in Eyes)
+                if (eye) ahead = Mathf.Max(ahead, Vector3.Dot(eye.position - center, direction));
+            return ahead;
+        }
 
         public float Radius
         {
@@ -84,7 +97,44 @@ namespace BetterFirstPerson
                 anchor.LocalCenter = box.center;
                 anchor.LocalRadius = 0.5f * Mathf.Min(box.size.x, Mathf.Min(box.size.y, box.size.z));
             }
+            anchor.Bone = HeadBone(transform);
+            anchor.Eyes = FindEyes(anchor.Bone);
             return anchor;
+        }
+
+        private static bool IsHeadBoneName(string name)
+        {
+            string n = name.ToLowerInvariant();
+            return n == "head" || n == "head_m" || n == "headbone" || n.EndsWith(":head", StringComparison.Ordinal) || n.EndsWith(" head", StringComparison.Ordinal);
+        }
+
+        // the anchor itself, its parent (weak points hang off the head), or a sibling (some hang off the neck)
+        private static Transform HeadBone(Transform anchor)
+        {
+            if (IsHeadBoneName(anchor.name)) return anchor;
+            Transform parent = anchor.parent;
+            if (!parent) return null;
+            if (IsHeadBoneName(parent.name)) return parent;
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                Transform sibling = parent.GetChild(i);
+                if (sibling != anchor && IsHeadBoneName(sibling.name)) return sibling;
+            }
+            return null;
+        }
+
+        private static Transform[] FindEyes(Transform headBone)
+        {
+            if (!headBone) return new Transform[0];
+            List<Transform> eyes = new List<Transform>();
+            foreach (Transform t in headBone.GetComponentsInChildren<Transform>(true))
+            {
+                string n = t.name.ToLowerInvariant();
+                if (!n.Contains("eye") || n.Contains("lid") || n.Contains("brow") || n.Contains("lash") || n.EndsWith("_end", StringComparison.Ordinal)) continue;
+                eyes.Add(t);
+                if (eyes.Count >= 16) break;
+            }
+            return eyes.ToArray();
         }
 
         // breadth first, so the bone closest to the model root wins over a same-named attachment deeper down

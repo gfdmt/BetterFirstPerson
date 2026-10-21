@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using RoR2;
 using UnityEngine;
 
@@ -9,6 +10,9 @@ namespace BetterFirstPerson
     // gets changed is put back in End.
     internal sealed class FirstPersonSession
     {
+        // bodies already described in the log: first person comes and goes (drop pod, cutscenes), the log line once
+        private static readonly HashSet<int> logged = new HashSet<int>();
+
         public readonly CharacterBody Body;
         public readonly GameObject BodyObject;
         public readonly CameraRigController Rig;
@@ -95,8 +99,10 @@ namespace BetterFirstPerson
             // the rig still works out a third person position; fading by its distance would dither our own body
             Rig.enableFading = false;
             if (hideLayerWasDrawn) Camera.cullingMask &= ~(1 << HideLayer);
-            Plugin.Log.LogInfo("First person on " + BodyName + ": eyes at " + Head.Source + ", head size " + Head.Radius.ToString("0.000")
-                + " m; weapon lowering moves " + weaponPose.Description + (HideLayer >= 0 ? "; faded parts go to layer " + HideLayer : ""));
+            if (logged.Add(Body.GetInstanceID()))
+                Plugin.Log.LogInfo("First person on " + BodyName + ": eyes at " + Head.Source + ", head size " + Head.Radius.ToString("0.000")
+                    + " m, head bone " + (Head.Bone ? "'" + Head.Bone.name + "'" : "none") + ", " + Head.Eyes.Length + " eye bones; weapon lowering moves "
+                    + weaponPose.Description + (HideLayer >= 0 ? "; faded parts go to layer " + HideLayer : ""));
             FirstPersonVisuals.Begin(this);
         }
 
@@ -179,7 +185,11 @@ namespace BetterFirstPerson
             Vector3 forward = Quaternion.Euler(0f, yaw, 0f) * Vector3.forward;
             // looking down the view reaches back under the head: the neck, the collar, the inside of the chest
             float push = Mathf.Max(0f, Settings.LookDownPush.Value) * Mathf.Clamp01((pitchDown - 15f) / 55f);
-            float distance = radius * (Mathf.Max(0f, Settings.ForwardOffset.Value) + push);
+            float offset = Mathf.Max(0f, Settings.ForwardOffset.Value);
+            float front = radius * offset;
+            // never behind the eyes
+            if (offset > 0f && Head.Eyes.Length > 0) front = Mathf.Max(front, Head.EyesAhead(center, forward) + 0.03f);
+            float distance = front + radius * push;
             float height = Survivor != null ? Survivor.CameraHeight.Value * 0.01f : 0f;
             Vector3 position = Steady(center, yaw, radius) + forward * distance + Vector3.up * height;
             Vector3 toPosition = position - center;

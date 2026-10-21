@@ -1,7 +1,10 @@
 using System;
 using EntityStates;
 using RoR2;
+using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace BetterFirstPerson
 {
@@ -48,9 +51,10 @@ namespace BetterFirstPerson
                 lastBody = body;
                 failedBody = null;
             }
-            if (Settings.ToggleKey.Value.IsDown() && !PauseManager.isPaused && !localUser.isUIFocused)
+            if (Settings.ToggleKey.Value.IsDown() && !PauseManager.isPaused && !IsTyping(localUser))
             {
-                wanted = !wanted;
+                // switches what is on screen: while first person waits (drop pod, cutscene) the key keeps it wanted
+                wanted = Session == null;
                 failedBody = null;
             }
 
@@ -78,9 +82,25 @@ namespace BetterFirstPerson
         {
             HealthComponent health = body.healthComponent;
             if (!health || !health.alive) return false;
-            if (!ReferenceEquals(rig.target, body.gameObject) || rig.hasOverride || body.currentVehicle) return false;
+            if (!ReferenceEquals(rig.target, body.gameObject) || rig.hasOverride) return false;
+            // vehicles that hide the body: the drop pod, the Volcanic Egg fireball, being swallowed. Rides where the
+            // body stays in view keep first person: Enforcer's dash, ziplines.
+            VehicleSeat vehicle = body.currentVehicle;
+            if (vehicle && (vehicle.hidePassenger || vehicle.isSurvivorPod)) return false;
             if (Settings.ThirdPersonWhileEmoting.Value && EmotesSupport.IsLocalEmotePlaying()) return false;
             return true;
+        }
+
+        // typing in the chat, the console or a text field of a menu
+        private static bool IsTyping(LocalUser localUser)
+        {
+            EventSystem eventSystem = localUser.eventSystem;
+            GameObject selected = eventSystem ? eventSystem.currentSelectedGameObject : null;
+            if (!selected) return false;
+            TMP_InputField textField = selected.GetComponent<TMP_InputField>();
+            if (textField && textField.isFocused) return true;
+            InputField legacyField = selected.GetComponent<InputField>();
+            return legacyField && legacyField.isFocused;
         }
 
         private static FirstPersonSession StartSession(CharacterBody body, CameraRigController rig)

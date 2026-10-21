@@ -46,6 +46,8 @@ namespace BetterFirstPerson
         {
             public string name;
             public bool isItem;
+            // worn on the head (hats, glasses, visors): never wanted in front of the eyes
+            public bool headgear;
             public ItemDisplay itemDisplay;
             public readonly List<FadeRenderer> renderers = new List<FadeRenderer>();
             public float coverage;
@@ -81,9 +83,12 @@ namespace BetterFirstPerson
         private static readonly List<FadeGroup> weaponGroups = new List<FadeGroup>();
         // particles and lines of the weapon: hidden while any weapon part is faded out
         private static readonly List<FadeRenderer> followers = new List<FadeRenderer>();
+        // the head's own extra meshes and effects (Captain's cap, Operator's eye glows): always hidden
+        private static readonly List<FadeRenderer> headgear = new List<FadeRenderer>();
         private static readonly List<FadeGroup> items = new List<FadeGroup>();
         private static readonly Dictionary<ItemDisplay, FadeGroup> itemGroups = new Dictionary<ItemDisplay, FadeGroup>();
         private static readonly Dictionary<SkinnedMeshRenderer, bool> boundsOverrides = new Dictionary<SkinnedMeshRenderer, bool>();
+        private static readonly HashSet<int> describedBodies = new HashSet<int>();
         private static readonly List<ItemDisplay> displayBuffer = new List<ItemDisplay>();
         private static readonly MaterialPropertyBlock block = new MaterialPropertyBlock();
         private static readonly int fadeId = Shader.PropertyToID("_Fade");
@@ -188,6 +193,7 @@ namespace BetterFirstPerson
             boundsOverrides.Clear();
             weaponGroups.Clear();
             followers.Clear();
+            headgear.Clear();
             items.Clear();
             itemGroups.Clear();
             bodyGroup = null;
@@ -215,6 +221,8 @@ namespace BetterFirstPerson
         {
             foreach (FadeGroup group in weaponGroups) RestoreGroup(group);
             foreach (FadeRenderer fr in followers)
+                if (fr.applied && fr.renderer) Restore(fr);
+            foreach (FadeRenderer fr in headgear)
                 if (fr.applied && fr.renderer) Restore(fr);
             if (bodyGroup != null) RestoreGroup(bodyGroup);
             foreach (FadeGroup group in items) RestoreGroup(group);
@@ -264,6 +272,8 @@ namespace BetterFirstPerson
             foreach (FadeGroup group in weaponGroups) ReapplyFade(group);
             if (bodyGroup != null) ReapplyFade(bodyGroup);
             foreach (FadeGroup group in items) ReapplyFade(group);
+            foreach (FadeRenderer fr in headgear)
+                if (fr.applied && fr.dither && fr.renderer) SetFade(fr, 0f);
         }
 
         // how much the head moves relative to the body and how much of that reaches the camera (cm/s in the log)
@@ -313,6 +323,8 @@ namespace BetterFirstPerson
             }
             foreach (FadeRenderer fr in followers)
                 if (fr.renderer) Apply(fr, followerAlpha);
+            foreach (FadeRenderer fr in headgear)
+                if (fr.renderer) Apply(fr, 0f);
             // a box can't tell the body from the air around it, only rendering can
             if (bodyGroup != null) UpdateGroup(bodyGroup, enabled && mode == MeasureMode.Render, BodyFadeStart, BodyFadeFull, deltaTime);
             foreach (FadeGroup group in items) UpdateGroup(group, enabled, start * ItemThresholdScale, full * ItemThresholdScale, deltaTime);
@@ -326,6 +338,13 @@ namespace BetterFirstPerson
 
         private static void UpdateGroup(FadeGroup group, bool enabled, float start, float full, float deltaTime)
         {
+            if (group.headgear)
+            {
+                group.alpha = 0f;
+                foreach (FadeRenderer fr in group.renderers)
+                    if (fr.renderer) Apply(fr, 0f);
+                return;
+            }
             float coverage = !enabled ? 0f : mode == MeasureMode.Box ? group.boxCoverage : group.measured ? group.coverage : 0f;
             float target = coverage <= start ? 1f : coverage >= full ? 0f : 1f - (coverage - start) / (full - start);
             float duration = target < group.alpha ? FadeOutTime : FadeInTime;
@@ -489,6 +508,13 @@ namespace BetterFirstPerson
             {
                 if (bodyRenderers.Contains(renderer)) continue;
                 FadeRenderer fr = MakeFadeRenderer(renderer);
+                if (IsHeadgear(renderer))
+                {
+                    headgear.Add(fr);
+                    sb.Append(" '").Append(renderer.name).Append("' (headgear, hidden)");
+                    parts++;
+                    continue;
+                }
                 if (fr.measurable)
                 {
                     FadeGroup group = new FadeGroup { name = renderer.name };
@@ -508,7 +534,19 @@ namespace BetterFirstPerson
             nextStatsLog = Time.time + 60f;
             sb.Append("; coverage by ").Append(mode == MeasureMode.Render ? "rendering" : "bounding boxes");
             if (hideLayer >= 0) sb.Append(", hidden on layer ").Append(hideLayer);
-            Plugin.Log.LogInfo(sb.ToString());
+            if (body && describedBodies.Add(body.GetInstanceID())) Plugin.Log.LogInfo(sb.ToString());
+        }
+
+        // hangs off the head bone, or is a small mesh sitting right on the head
+        private static bool IsHeadgear(Renderer renderer)
+        {
+            HeadAnchor head = session != null ? session.Head : null;
+            if (head == null || !head.Transform || !renderer) return false;
+            if (head.Bone && renderer.transform.IsChildOf(head.Bone)) return true;
+            if (!(renderer is SkinnedMeshRenderer) && !(renderer is MeshRenderer)) return false;
+            Bounds bounds = renderer.bounds;
+            float radius = head.Radius;
+            return bounds.extents.magnitude < 2.5f * radius && (bounds.center - head.Center).magnitude < 1.5f * radius;
         }
 
         private static string Describe(FadeRenderer fr)
@@ -589,8 +627,14 @@ namespace BetterFirstPerson
             {
                 if (!display || display.rendererInfos == null || itemGroups.ContainsKey(display)) continue;
                 FadeGroup group = new FadeGroup { name = display.name.Replace("(Clone)", ""), isItem = true, itemDisplay = display };
+                bool onHead = true;
                 foreach (CharacterModel.RendererInfo info in display.rendererInfos)
-                    if (info.renderer) group.renderers.Add(MakeFadeRenderer(info.renderer));
+                {
+                    if (!info.renderer) continue;
+                    group.renderers.Add(MakeFadeRenderer(info.renderer));
+                    onHead &= IsHeadgear(info.renderer);
+                }
+                group.headgear = onHead && group.renderers.Count > 0;
                 itemGroups[display] = group;
                 items.Add(group);
             }
@@ -698,7 +742,7 @@ namespace BetterFirstPerson
 
         private static void AddTile(PendingReadback slot, ref int tiles, FadeGroup group)
         {
-            if (tiles >= MaxTiles) return;
+            if (tiles >= MaxTiles || group.headgear) return;
             if (HasDrawable(group)) slot.mapping[tiles++] = group;
             else group.coverage = 0f;
         }
