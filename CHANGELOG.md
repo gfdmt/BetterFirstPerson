@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- Captain's coat and body (his model has the head separate) count as the body now: his gun stays visible and only fades when it covers a big part of the screen.
+- The check that the screen coverage measurement works no longer gives up by mistake when big meshes are around the camera.
+- Skills and rides that widen the game's field of view (Enforcer's dash and shield) widen first person only as much as sprinting does, scaled by Sprint FOV Effect. Scopes still zoom in fully.
+
 ## 1.1.0
 
 - First public release.

@@ -1,6 +1,6 @@
 {
     "name": "Better_First_Person",
-    "version_number": "1.1.0",
+    "version_number": "1.1.1",
     "website_url": "https://github.com/gfdmt/BetterFirstPerson",
     "description": "First person from your survivor's eyes: your body in view, a steady camera, proper FOV, and weapons that lower and fade when they would block the screen.",
     "dependencies": [
