@@ -8,15 +8,21 @@ Play Risk of Rain 2 from your survivor's eyes. You see your own body, arms, weap
 - **Weapon out of the way.** Railgunner holds her rifle lower, and any survivor's arms and weapon can be lowered the same way. Weapon parts and item displays that still cover a big part of the screen (sprint jumps, falling) fade out smoothly and come back when the view is clear.
 - **Proper field of view.** Set the horizontal FOV you want. Sprinting and scopes still widen and narrow it like in vanilla, and mouse sensitivity stays the same.
 - **The body follows your view.** Your survivor always faces where you look. Walking backwards plays the backpedal animation instead of turning around.
+- **Weapon sway.** On fast turns the arms and the weapon trail behind a little and settle back smoothly.
+- **No body through the camera.** Skills that throw the whole body around (Huntress' Arrow Rain and glaive throw, Mercenary's dashes, Loader's charged punches) hide your body and weapon while they play. Primary attacks stay visible.
 - **Steady camera.** Running bob, melee swings and Acrid's gallop are taken out of the view. Moving, jumping and turning are never delayed.
 - **Shots go to the crosshair.** You aim from the eyes, in single player and in multiplayer.
-- **Small muzzle flashes** for your own weapons, so firing doesn't flash half the screen.
+- **Small muzzle flashes** for your own weapons, so firing doesn't flash half the screen. Effects that go off in the middle of your body, like Huntress' blink, and flashes over your own model are hidden instead of lighting up inside the camera.
 - **No hat brims in your eyes.** Headgear and eye glows (Captain's cap, Bandit's hat, Operator's eyes, head items) are hidden in first person.
 - **Hands off.** First person comes back by itself after respawning and on the next stage, and the game's own camera takes over for the drop pod, cutscenes, death and spectating.
 
 ## How to use
 
 Press **O** during a run to switch between first and third person. The key can be changed in the settings.
+
+## Screenshots
+
+[![Huntress in first person](https://raw.githubusercontent.com/gfdmt/BetterFirstPerson/main/docs/screenshots/huntress-small.jpg)](https://raw.githubusercontent.com/gfdmt/BetterFirstPerson/main/docs/screenshots/huntress.jpg) [![Commando in first person](https://raw.githubusercontent.com/gfdmt/BetterFirstPerson/main/docs/screenshots/commando-small.jpg)](https://raw.githubusercontent.com/gfdmt/BetterFirstPerson/main/docs/screenshots/commando.jpg)
 
 ## Settings
 
@@ -33,6 +39,9 @@ Everything is in the game's **Mod Options** (Risk Of Options) and can be changed
 | Camera Stabilization | 0.6 | 0 = the camera follows the head exactly, 1 = steadiest |
 | Fade Weapon Covering Screen | on | Fade parts that cover more than *Weapon Fade Start* of the screen, fully gone at *Weapon Fade Full* |
 | Own Muzzle Flash Size | 0.35 | 1 = vanilla, 0 = hidden |
+| Hide Bursts At Your Body | on | Hide effects that go off in the middle of your own body and flashes over your own model |
+| Hide Body During Skills | on | Hide your body and weapon while a skill moves the whole body |
+| Weapon Sway | 1 | How much the arms and the weapon trail behind fast turns, 0 = fixed to the view |
 
 For every survivor, including modded ones:
 
