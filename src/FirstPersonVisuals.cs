@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Text;
 using RoR2;
 using Unity.Collections;
@@ -16,6 +17,7 @@ namespace BetterFirstPerson
     // that is read back asynchronously: a few draw calls, no GPU stall. Where that is not available or does
     // not work, the coverage is estimated from bounding boxes instead.
     // The body itself is measured too and only gets out of the way when it blocks nearly the whole view.
+    // While a skill moves the whole body (flips, throws, dashes), the whole model is hidden.
     internal static class FirstPersonVisuals
     {
         private const int TileWidth = 64;
@@ -25,6 +27,11 @@ namespace BetterFirstPerson
         private const float BodyFadeFull = 0.95f;
         private const float FadeOutTime = 0.1f;
         private const float FadeInTime = 0.25f;
+        // the animator layer skills use for animations of the whole body (flips, throws, dashes)
+        private const string FullBodyLayerName = "FullBody, Override";
+        private const float SkillHideOutTime = 0.05f;
+        // how long after a skill starts its animation still counts as that skill's
+        private const float SkillAnimationDelay = 0.5f;
 
         private sealed class FadeRenderer
         {
@@ -48,6 +55,11 @@ namespace BetterFirstPerson
             public bool isItem;
             // worn on the head (hats, glasses, visors): never wanted in front of the eyes
             public bool headgear;
+            // see-through glows (arrows of light, holograms): out of the way sooner, like item displays
+            public bool fx;
+            public bool wasDrawn;
+            // switched on since the last measurement: kept hidden until it is measured
+            public bool awaitingMeasure;
             public ItemDisplay itemDisplay;
             public readonly List<FadeRenderer> renderers = new List<FadeRenderer>();
             public float coverage;
@@ -120,7 +132,6 @@ namespace BetterFirstPerson
         private static bool renderResourcesTried;
         private static bool renderVerified;
         private static int checkVisibleFrames;
-        private static int checkRenderedFrames;
         private static Material coverageMaterial;
         private static RenderTexture coverageTexture;
         private static CommandBuffer commandBuffer;
@@ -141,6 +152,30 @@ namespace BetterFirstPerson
         private static float swayCamera;
         private static Vector3 lastHeadOffset;
         private static Vector3 lastCameraOffset;
+
+        // While a skill moves the whole body, the whole model is hidden: how visible it is (1 = only the
+        // fading above applies), whether the full body layer plays, whether its animation is hidden.
+        private static float modelAlpha = 1f;
+        private static int fullBodyLayer = -1;
+        private static bool fullBodyPlaying;
+        private static bool skillHide;
+        private static GenericSkill lastSkill;
+        private static float lastSkillTime = -10f;
+        private static bool skillStarted;
+        private static int skillHides;
+        private static float skillHiddenTime;
+        private static int burstsHidden;
+        private static readonly HashSet<int> strippedOverlays = new HashSet<int>();
+        private static bool overlaysBroken;
+
+        private static bool aimValid;
+        private static float lastAimYaw;
+        private static int aimFrames;
+        private static int aimJumps;
+        private static float aimTime;
+        private static float aimSum;
+        private static float aimMax;
+        private static float swayMax;
 
         // ---------------------------------------------------------------- lifecycle
 
@@ -169,10 +204,10 @@ namespace BetterFirstPerson
             {
                 animatorCulling = animator.cullingMode;
                 animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                fullBodyLayer = animator.GetLayerIndex(FullBodyLayerName);
             }
             classifyFrame = Time.frameCount + 1;
             checkVisibleFrames = 0;
-            checkRenderedFrames = 0;
         }
 
         public static void End()
@@ -185,6 +220,8 @@ namespace BetterFirstPerson
                 foreach (KeyValuePair<SkinnedMeshRenderer, bool> pair in boundsOverrides)
                     if (pair.Key) pair.Key.updateWhenOffscreen = pair.Value;
                 if (animator) animator.cullingMode = animatorCulling;
+                // the flashes left out in first person come back in third person
+                if (model && strippedOverlays.Count > 0) RefreshOverlays(model);
             }
             catch (Exception exception)
             {
@@ -209,6 +246,24 @@ namespace BetterFirstPerson
             swayTime = 0f;
             swayHead = 0f;
             swayCamera = 0f;
+            aimValid = false;
+            aimFrames = 0;
+            aimJumps = 0;
+            aimTime = 0f;
+            aimSum = 0f;
+            aimMax = 0f;
+            swayMax = 0f;
+            modelAlpha = 1f;
+            fullBodyLayer = -1;
+            fullBodyPlaying = false;
+            skillHide = false;
+            lastSkill = null;
+            lastSkillTime = -10f;
+            skillStarted = false;
+            skillHides = 0;
+            skillHiddenTime = 0f;
+            burstsHidden = 0;
+            strippedOverlays.Clear();
         }
 
         // the game can quit while first person is on, End is not called then
@@ -290,6 +345,22 @@ namespace BetterFirstPerson
             swayValid = true;
         }
 
+        // how far the animation aims the arms to the side of the body's facing, how often that jumps by more
+        // than a degree from one frame to the next, and how far the arms sway (degrees in the log)
+        public static void RecordAim(float aimYaw, float sway)
+        {
+            float deltaTime = Time.deltaTime;
+            if (deltaTime <= 0f || deltaTime > 0.25f) return;
+            if (aimValid && Mathf.Abs(Mathf.DeltaAngle(lastAimYaw, aimYaw)) > 1f) aimJumps++;
+            lastAimYaw = aimYaw;
+            aimValid = true;
+            aimFrames++;
+            aimTime += deltaTime;
+            aimSum += Mathf.Abs(aimYaw) * deltaTime;
+            aimMax = Mathf.Max(aimMax, Mathf.Abs(aimYaw));
+            swayMax = Mathf.Max(swayMax, Mathf.Abs(sway));
+        }
+
         private static void UpdateFade(Camera cam)
         {
             float deltaTime = Time.deltaTime;
@@ -313,13 +384,17 @@ namespace BetterFirstPerson
                     SelfCheck();
                 }
             }
+            UpdateSkillHide(deltaTime);
             float start = Settings.FadeStart.Value;
             float full = Mathf.Max(start + 0.01f, Settings.FadeFull.Value);
             float followerAlpha = 1f;
             foreach (FadeGroup group in weaponGroups)
             {
-                UpdateGroup(group, enabled, start, full, deltaTime);
-                followerAlpha = Mathf.Min(followerAlpha, group.alpha);
+                WatchSwitchOn(group, enabled);
+                float scale = group.fx ? ItemThresholdScale : 1f;
+                UpdateGroup(group, enabled, start * scale, full * scale, deltaTime);
+                // lines and particles go with the solid parts of the weapon
+                if (!group.fx) followerAlpha = Mathf.Min(followerAlpha, group.alpha);
             }
             foreach (FadeRenderer fr in followers)
                 if (fr.renderer) Apply(fr, followerAlpha);
@@ -347,6 +422,20 @@ namespace BetterFirstPerson
             }
             float coverage = !enabled ? 0f : mode == MeasureMode.Box ? group.boxCoverage : group.measured ? group.coverage : 0f;
             float target = coverage <= start ? 1f : coverage >= full ? 0f : 1f - (coverage - start) / (full - start);
+            if (group.awaitingMeasure)
+            {
+                if (!enabled || mode != MeasureMode.Render || group.measured)
+                {
+                    // the first measurement since it was switched on decides at once
+                    group.awaitingMeasure = false;
+                    group.alpha = target;
+                }
+                else
+                {
+                    target = 0f;
+                    group.alpha = 0f;
+                }
+            }
             float duration = target < group.alpha ? FadeOutTime : FadeInTime;
             group.alpha = Mathf.MoveTowards(group.alpha, target, deltaTime / duration);
             if (enabled)
@@ -361,6 +450,25 @@ namespace BetterFirstPerson
                 if (fr.renderer) Apply(fr, group.alpha);
         }
 
+        // A glow that a skill switches on (Huntress' arrow cluster) stays hidden until it has been measured, so
+        // it never flashes up in front of the eyes for the few frames a measurement takes. Parts that start
+        // switched off may only get their materials when they come on.
+        private static void WatchSwitchOn(FadeGroup group, bool enabled)
+        {
+            bool drawn = HasDrawable(group);
+            if (drawn && !group.wasDrawn)
+            {
+                group.fx = IsEffectGroup(group);
+                if (group.fx && enabled && mode == MeasureMode.Render)
+                {
+                    group.awaitingMeasure = true;
+                    group.measured = false;
+                    group.alpha = 0f;
+                }
+            }
+            group.wasDrawn = drawn;
+        }
+
         private static float ModelFade()
         {
             return model ? model.fade : 1f;
@@ -368,6 +476,7 @@ namespace BetterFirstPerson
 
         private static void Apply(FadeRenderer fr, float alpha)
         {
+            alpha *= modelAlpha;
             if (alpha >= 0.999f)
             {
                 if (fr.applied) Restore(fr);
@@ -429,7 +538,132 @@ namespace BetterFirstPerson
         private static void ReapplyFade(FadeGroup group)
         {
             foreach (FadeRenderer fr in group.renderers)
-                if (fr.applied && fr.dither && fr.renderer) SetFade(fr, ModelFade() * group.alpha);
+                if (fr.applied && fr.dither && fr.renderer) SetFade(fr, ModelFade() * group.alpha * modelAlpha);
+        }
+
+        // ---------------------------------------------------------------- skills that move the whole body
+
+        // Flips, throws and dashes play on the animator's full body layer and were made for a camera behind
+        // the survivor: in first person the body passes through the camera. While such an animation plays,
+        // the whole model is hidden. It is decided when the animation starts, and again when another skill
+        // starts during it: the primary attack keeps the model visible (melee swings), anything else hides it.
+        private static void UpdateSkillHide(float deltaTime)
+        {
+            bool playing = FullBodyAnimationPlaying();
+            if (playing && (!fullBodyPlaying || skillStarted))
+            {
+                bool fromSkill = lastSkill && Time.time - lastSkillTime < SkillAnimationDelay;
+                bool primary = fromSkill && IsPrimary(lastSkill);
+                bool hide = fullBodyPlaying ? skillHide || (fromSkill && !primary) : !primary;
+                if (hide && !skillHide) skillHides++;
+                skillHide = hide;
+            }
+            else if (!playing)
+            {
+                skillHide = false;
+            }
+            fullBodyPlaying = playing;
+            skillStarted = false;
+            float target = skillHide && Settings.HideBodyDuringSkills.Value ? 0f : 1f;
+            modelAlpha = Mathf.MoveTowards(modelAlpha, target, deltaTime / (target < modelAlpha ? SkillHideOutTime : FadeInTime));
+            if (modelAlpha < 0.999f) skillHiddenTime += deltaTime;
+        }
+
+        // the layer plays an animation: its state has clips, or it is blending into one that has
+        private static bool FullBodyAnimationPlaying()
+        {
+            if (fullBodyLayer < 0 || !animator || !animator.isActiveAndEnabled || fullBodyLayer >= animator.layerCount) return false;
+            if (animator.GetLayerWeight(fullBodyLayer) < 0.5f) return false;
+            if (animator.GetCurrentAnimatorClipInfoCount(fullBodyLayer) > 0) return true;
+            return animator.IsInTransition(fullBodyLayer) && animator.GetNextAnimatorClipInfoCount(fullBodyLayer) > 0;
+        }
+
+        private static bool IsPrimary(GenericSkill skill)
+        {
+            SkillLocator locator = body ? body.skillLocator : null;
+            return locator && ReferenceEquals(skill, locator.primary);
+        }
+
+        public static void OnSkillExecuted(GenericSkill skill)
+        {
+            lastSkill = skill;
+            lastSkillTime = Time.time;
+            skillStarted = true;
+        }
+
+        // ---------------------------------------------------------------- flashes over the own model
+
+        public static void CountBurst()
+        {
+            burstsHidden++;
+        }
+
+        // The game draws flashes (Huntress reappearing after her blink) and swelling shells (shields) over
+        // the whole model, the face included, and in first person the face is right at the camera. Our own
+        // model goes without the flashes that come and go and without anything that swells the mesh. Reads
+        // fields the game keeps to itself: should that ever stop working, only this goes quiet.
+        public static void StripOverlays(CharacterModel target)
+        {
+            if (overlaysBroken) return;
+            try
+            {
+                StripOverlaysFrom(target);
+            }
+            catch (Exception exception)
+            {
+                overlaysBroken = true;
+                Plugin.Log.LogWarning("Leaving flashes out of the own model stopped working: " + exception.Message);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void StripOverlaysFrom(CharacterModel target)
+        {
+            Material[] overlays = target.currentOverlays;
+            int count = overlays != null ? Mathf.Min(target.activeOverlayCount, overlays.Length) : 0;
+            if (count <= 0) return;
+            List<TemporaryOverlayInstance> temporary = target.temporaryOverlays;
+            int kept = 0;
+            for (int i = 0; i < count; i++)
+            {
+                Material material = overlays[i];
+                if (material && (material.IsKeywordEnabled("VERTEXOFFSET") || IsTemporary(temporary, material)))
+                {
+                    strippedOverlays.Add(material.GetInstanceID());
+                    continue;
+                }
+                overlays[kept++] = material;
+            }
+            for (int i = kept; i < count; i++) overlays[i] = null;
+            target.activeOverlayCount = kept;
+        }
+
+        private static bool IsTemporary(List<TemporaryOverlayInstance> temporary, Material material)
+        {
+            if (temporary == null) return false;
+            foreach (TemporaryOverlayInstance overlay in temporary)
+                if (overlay != null && ReferenceEquals(overlay.materialInstance, material)) return true;
+            return false;
+        }
+
+        // the model puts its overlays together again on the next frame
+        private static void RefreshOverlays(CharacterModel target)
+        {
+            if (overlaysBroken) return;
+            try
+            {
+                ForceOverlayUpdate(target);
+            }
+            catch (Exception)
+            {
+                overlaysBroken = true;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void ForceOverlayUpdate(CharacterModel target)
+        {
+            target.forceUpdate = true;
         }
 
         // ---------------------------------------------------------------- sorting out the model
@@ -525,29 +759,53 @@ namespace BetterFirstPerson
             if (bodyGroup.renderers.Count == 0) bodyGroup = null;
             sb.Append("; weapon:");
             int parts = 0;
+            // loose meshes on one object make up one thing (Huntress' arrow quads): measured and faded together
+            Dictionary<Transform, FadeGroup> looseGroups = new Dictionary<Transform, FadeGroup>();
             foreach (Renderer renderer in renderers)
             {
                 if (bodyRenderers.Contains(renderer)) continue;
                 FadeRenderer fr = MakeFadeRenderer(renderer);
+                parts++;
                 if (IsHeadgear(renderer))
                 {
                     headgear.Add(fr);
                     sb.Append(" '").Append(renderer.name).Append("' (headgear, hidden)");
-                    parts++;
                     continue;
                 }
-                if (fr.measurable)
-                {
-                    FadeGroup group = new FadeGroup { name = renderer.name };
-                    group.renderers.Add(fr);
-                    weaponGroups.Add(group);
-                }
-                else
+                if (!fr.measurable)
                 {
                     followers.Add(fr);
+                    sb.Append(" '").Append(renderer.name).Append('\'').Append(Describe(fr));
+                    continue;
                 }
-                parts++;
-                sb.Append(" '").Append(renderer.name).Append('\'').Append(Describe(fr));
+                Transform parent = renderer.transform.parent;
+                bool loose = !fr.skinned && parent && parent != modelTransform;
+                if (!loose || !looseGroups.TryGetValue(parent, out FadeGroup group))
+                {
+                    group = new FadeGroup { name = renderer.name };
+                    weaponGroups.Add(group);
+                    if (loose) looseGroups[parent] = group;
+                }
+                else if (group.renderers.Count == 1)
+                {
+                    group.name = parent.name;
+                }
+                group.renderers.Add(fr);
+            }
+            foreach (FadeGroup group in weaponGroups)
+            {
+                group.fx = IsEffectGroup(group);
+                sb.Append(" '").Append(group.name).Append('\'');
+                if (group.renderers.Count > 1)
+                {
+                    sb.Append(" [");
+                    for (int i = 0; i < group.renderers.Count; i++)
+                        sb.Append(i == 0 ? "" : ", ").Append(group.renderers[i].renderer.name);
+                    sb.Append(']');
+                }
+                sb.Append(Describe(group.renderers[0]));
+                if (group.fx) sb.Append(" (glow)");
+                if (!HasDrawable(group)) sb.Append(" (off)");
             }
             if (parts == 0) sb.Append(" none");
             RefreshItemDisplays();
@@ -568,6 +826,20 @@ namespace BetterFirstPerson
             Bounds bounds = renderer.bounds;
             float radius = head.Radius;
             return bounds.extents.magnitude < 2.5f * radius && (bounds.center - head.Center).magnitude < 1.5f * radius;
+        }
+
+        // drawn see-through, after the solid world (glowing quads, beams), and unable to dither
+        private static bool IsEffectGroup(FadeGroup group)
+        {
+            foreach (FadeRenderer fr in group.renderers)
+            {
+                if (fr.dither || !fr.renderer) return false;
+                Material[] materials = fr.renderer.sharedMaterials;
+                if (materials.Length == 0) return false;
+                foreach (Material material in materials)
+                    if (!material || material.renderQueue <= (int)RenderQueue.GeometryLast) return false;
+            }
+            return group.renderers.Count > 0;
         }
 
         private static string Describe(FadeRenderer fr)
@@ -1085,7 +1357,7 @@ namespace BetterFirstPerson
 
         private static void LogStats(bool final)
         {
-            if (weaponGroups.Count == 0 && items.Count == 0 && bodyGroup == null && swayTime < 1f) return;
+            if (weaponGroups.Count == 0 && items.Count == 0 && bodyGroup == null && swayTime < 1f && aimTime < 1f && skillHides == 0 && burstsHidden == 0) return;
             StringBuilder sb = new StringBuilder("Screen coverage " + (final ? "summary" : "so far") + " for " + bodyName
                 + " (" + (mode == MeasureMode.Render ? "rendered" : "bounding boxes") + ", fade from " + Settings.FadeStart.Value.ToString("0.00")
                 + " to " + Settings.FadeFull.Value.ToString("0.00") + ", items at half, body from " + BodyFadeStart.ToString("0.00") + "):");
@@ -1099,6 +1371,22 @@ namespace BetterFirstPerson
                 sb.Append("\n  head movement relative to the body ").Append((100f * swayHead / swayTime).ToString("0"))
                     .Append(" cm/s, reaching the camera ").Append((100f * swayCamera / swayTime).ToString("0"))
                     .Append(" cm/s (stabilization ").Append(Settings.Stabilization.Value.ToString("0.00")).Append(')');
+                any = true;
+            }
+            if (aimTime >= 1f && aimFrames > 0)
+            {
+                sb.Append("\n  arms aimed to the side of the body: avg ").Append((aimSum / aimTime).ToString("0.0"))
+                    .Append(" deg, max ").Append(aimMax.ToString("0.0")).Append(" deg, jumps over 1 deg in ")
+                    .Append((100f * aimJumps / aimFrames).ToString("0.0")).Append("% of frames; sway up to ")
+                    .Append(swayMax.ToString("0.0")).Append(" deg (weapon sway ").Append(Settings.WeaponSway.Value.ToString("0.00")).Append(')');
+                any = true;
+            }
+            if (skillHides > 0 || burstsHidden > 0 || strippedOverlays.Count > 0)
+            {
+                sb.Append("\n  model hidden for skills that move the whole body ").Append(skillHides).Append(" times, ")
+                    .Append(skillHiddenTime.ToString("0.0")).Append(" s (")
+                    .Append(fullBodyLayer >= 0 ? "full body layer " + fullBodyLayer : "no full body layer").Append("); bursts at the body hidden: ")
+                    .Append(burstsHidden).Append("; flashes left out of the model: ").Append(strippedOverlays.Count);
                 any = true;
             }
             if (any) Plugin.Log.LogInfo(sb.ToString());

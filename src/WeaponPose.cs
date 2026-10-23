@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using RoR2;
@@ -8,7 +9,8 @@ namespace BetterFirstPerson
     // Lowers the arms and the weapon they hold, after each frame's animation, by turning them together around
     // the shoulders: a "low ready" pose that clears the middle of the view. Some weapons hang off the hips
     // on their own bones (Railgunner's rifle, Huntress' bow, Bandit's shotgun); they get the same turn as the
-    // arms while a hand is on them, so the hands stay on the grip.
+    // arms while a hand is on them, so the hands stay on the grip. The same turn lets them sway behind fast
+    // turns of the view.
     internal sealed class WeaponPose
     {
         private sealed class Part
@@ -28,11 +30,25 @@ namespace BetterFirstPerson
         private static readonly string[] gameplayWords = { "hitbox", "hurtbox", "collision", "trigger" };
         private static readonly string[] bodyWords ={ "thigh", "pelvis", "hip", "leg", "calf", "foot", "neck", "head", "cloth", "coat", "cape", "scarf", "hair", "jiggle", "belt", "pack", "tail", "wing", "jet", "light" };
 
+        // sway: the most the arms trail behind a turn, in degrees at strength 1; how many seconds of the turn
+        // rate they trail by before leveling off; how quickly they follow and settle
+        private const float SwayMaxDegrees = 5f;
+        private const float SwayResponse = 0.04f;
+        private const float SwaySmoothTime = 0.09f;
+
         private readonly List<Part> parts = new List<Part>();
         private readonly List<Transform> hands = new List<Transform>();
         private readonly float holdDistance;
+        private float swayLastYaw;
+        private float swayLag;
+        private float swayVelocity;
+        private bool swayValid;
+        private int swayFrame;
 
         public string Description { get; }
+
+        // how far the arms trail behind the view's turning right now, in degrees
+        public float SwayDegrees => swayValid ? swayLag : 0f;
 
         private WeaponPose(float holdDistance, string description)
         {
@@ -106,10 +122,11 @@ namespace BetterFirstPerson
 
         // Called once per frame after the animation. The animator rewrites the bones each frame it runs; a
         // bone it left alone still carries last frame's turn, which is taken back before turning again.
-        public void Apply(float degrees, float yaw)
+        public void Apply(float degrees, float yaw, float sway)
         {
             foreach (Part part in parts) TakeBack(part);
-            if (degrees <= 0.01f) return;
+            float lag = SwayLag(yaw, sway);
+            if (degrees <= 0.01f && Mathf.Abs(lag) < 0.01f) return;
             Vector3 pivot = Vector3.zero;
             int arms = 0;
             foreach (Part part in parts)
@@ -120,8 +137,9 @@ namespace BetterFirstPerson
             }
             if (arms == 0) return;
             pivot /= arms;
-            // around the view's horizontal right axis: down on the screen whatever the stance
-            Quaternion turn = Quaternion.AngleAxis(degrees, Quaternion.Euler(0f, yaw, 0f) * Vector3.right);
+            // lowering: around the view's horizontal right axis, down on the screen whatever the stance;
+            // sway: around the vertical through the shoulders
+            Quaternion turn = Quaternion.AngleAxis(lag, Vector3.up) * Quaternion.AngleAxis(degrees, Quaternion.Euler(0f, yaw, 0f) * Vector3.right);
             foreach (Part part in parts)
             {
                 Transform t = part.Transform;
@@ -138,6 +156,36 @@ namespace BetterFirstPerson
         public void Release()
         {
             foreach (Part part in parts) TakeBack(part);
+            swayValid = false;
+        }
+
+        // The body turns with the view at once, so on their own the arms would be locked to the screen while
+        // the view turns (looking up and down, the game's aim smoothing already lets them trail). They trail
+        // behind fast turns by up to a few degrees and settle smoothly once the turn stops. Returns how far,
+        // in degrees around the vertical (negative trails a turn to the right).
+        private float SwayLag(float yaw, float strength)
+        {
+            float deltaTime = Time.deltaTime;
+            if (!swayValid)
+            {
+                swayLastYaw = yaw;
+                swayLag = 0f;
+                swayVelocity = 0f;
+                swayValid = true;
+                swayFrame = Time.frameCount;
+                return 0f;
+            }
+            // moved on once per frame, however often the camera is set up
+            if (deltaTime <= 0f || swayFrame == Time.frameCount) return swayLag;
+            swayFrame = Time.frameCount;
+            float rate = Mathf.DeltaAngle(swayLastYaw, yaw) / deltaTime;
+            swayLastYaw = yaw;
+            float limit = SwayMaxDegrees * Mathf.Max(0f, strength);
+            // grows with the turn rate and levels off smoothly at the limit; noisy mouse input is evened out
+            // by the damping
+            float target = limit > 0.01f ? -limit * (float)Math.Tanh(rate * SwayResponse / limit) : 0f;
+            swayLag = Mathf.SmoothDamp(swayLag, target, ref swayVelocity, SwaySmoothTime, Mathf.Infinity, deltaTime);
+            return swayLag;
         }
 
         private static void TakeBack(Part part)

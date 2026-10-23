@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using RoR2;
 using UnityEngine;
 
@@ -37,6 +38,8 @@ namespace BetterFirstPerson
         private readonly bool originalFading;
         private readonly Transform aimOrigin;
         private readonly Vector3 aimOriginLocalPosition;
+        private readonly AimAnimator aimAnimator;
+        private bool aimDiagnosticBroken;
         private float lastGameFov;
         private bool fovLogged;
 
@@ -72,6 +75,7 @@ namespace BetterFirstPerson
             HideLayer = FindHideLayer();
             hideLayerWasDrawn = HideLayer >= 0 && (camera.cullingMask & (1 << HideLayer)) != 0;
             weaponPose = WeaponPose.Build(model, head.Transform, Locator, head.Radius);
+            aimAnimator = model.GetComponent<AimAnimator>();
         }
 
         public static FirstPersonSession Start(CharacterBody body, CameraRigController rig)
@@ -160,9 +164,37 @@ namespace BetterFirstPerson
                     + ", applied vertical " + fov.ToString("0.0") + " = horizontal " + FieldOfView.VerticalToHorizontal(fov, Camera.aspect).ToString("0.0"));
             }
             float yaw = cameraTransform.eulerAngles.y;
-            FirstPersonController.SnapBodyYaw(this, yaw);
-            weaponPose.Apply(Survivor != null ? Survivor.WeaponLowering.Value : 0f, yaw);
+            bool turned = FirstPersonController.SnapBodyYaw(this, yaw);
+            // the arms are aimed in the next update from the body's facing and the aim direction: both from
+            // this frame's view, whichever runs first, so the aim never jumps between frames
+            InputBankTest input = Body ? Body.inputBank : null;
+            if (input) input.aimDirection = cameraTransform.forward;
+            float sway = turned ? Settings.WeaponSway.Value : 0f;
+            weaponPose.Apply(Survivor != null ? Survivor.WeaponLowering.Value : 0f, yaw, sway);
+            RecordAim();
             PlaceCamera();
+        }
+
+        // How the animation aims the arms off the body's facing (near zero while the body follows the view)
+        // and how far they sway, for the log. Reads a field the game keeps to itself: should that ever stop
+        // working, only this goes quiet.
+        private void RecordAim()
+        {
+            if (aimDiagnosticBroken || !aimAnimator || !aimAnimator.enabled) return;
+            try
+            {
+                RecordAimFrom(aimAnimator);
+            }
+            catch (Exception)
+            {
+                aimDiagnosticBroken = true;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void RecordAimFrom(AimAnimator animator)
+        {
+            FirstPersonVisuals.RecordAim(animator.currentLocalAngles.yaw, weaponPose.SwayDegrees);
         }
 
         // just before the camera draws: everything has moved for this frame

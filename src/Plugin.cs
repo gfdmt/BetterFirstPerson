@@ -7,8 +7,12 @@ using BepInEx.Logging;
 using RiskOfOptions;
 using UnityEngine;
 
-// a few game members used here are not public; the game's runtime allows the access with this
+// a few game members used here are not public; the game's runtime allows the access with this. The compiler
+// calls this kind of request obsolete, as newer .NET ignores it, but the game's Mono runtime still honors it:
+// the warning is switched off for this line only
+#pragma warning disable CS0618
 [assembly: SecurityPermission(SecurityAction.RequestMinimum, SkipVerification = true)]
+#pragma warning restore CS0618
 
 namespace BetterFirstPerson
 {
@@ -18,7 +22,7 @@ namespace BetterFirstPerson
     {
         public const string Guid = "com.gfdmt.betterfirstperson";
         public const string Name = "Better First Person";
-        public const string Version = "1.1.1";
+        public const string Version = "1.1.2";
 
         internal static ManualLogSource Log;
 

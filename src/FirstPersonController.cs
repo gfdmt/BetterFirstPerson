@@ -1,4 +1,6 @@
 using System;
+using BepInEx;
+using BepInEx.Configuration;
 using EntityStates;
 using RoR2;
 using TMPro;
@@ -27,6 +29,8 @@ namespace BetterFirstPerson
             On.RoR2.CameraRigController.SetCameraState += SetCameraState;
             On.EntityStates.GenericCharacterMain.HandleMovements += HandleMovements;
             On.RoR2.CharacterModel.UpdateMaterials += UpdateMaterials;
+            On.RoR2.CharacterModel.UpdateOverlays += UpdateOverlays;
+            On.RoR2.GenericSkill.OnExecute += SkillExecuted;
             Camera.onPreCull += PreCull;
             Run.onRunDestroyGlobal += run => EndSession();
             Application.quitting += FirstPersonVisuals.OnQuit;
@@ -51,10 +55,11 @@ namespace BetterFirstPerson
                 lastBody = body;
                 failedBody = null;
             }
-            if (Settings.ToggleKey.Value.IsDown() && !PauseManager.isPaused && !IsTyping(localUser))
+            if (ToggleKeyPressed() && !PauseManager.isPaused && !IsTyping(localUser))
             {
-                // switches what is on screen: while first person waits (drop pod, cutscene) the key keeps it wanted
-                wanted = Session == null;
+                // While first person could be on screen, the key switches what is on screen. While it has to
+                // wait (drop pod, cutscene, emote), the key switches whether it comes back afterwards.
+                wanted = body && CanRun(body, rig) ? Session == null : !wanted;
                 failedBody = null;
             }
 
@@ -88,6 +93,18 @@ namespace BetterFirstPerson
             VehicleSeat vehicle = body.currentVehicle;
             if (vehicle && (vehicle.hidePassenger || vehicle.isSurvivorPod)) return false;
             if (Settings.ThirdPersonWhileEmoting.Value && EmotesSupport.IsLocalEmotePlaying()) return false;
+            return true;
+        }
+
+        // The shortcut's own check refuses while any other key is held, so the key didn't react while running
+        // or sprinting: here only the key itself and its modifiers count.
+        private static bool ToggleKeyPressed()
+        {
+            KeyboardShortcut shortcut = Settings.ToggleKey.Value;
+            KeyCode key = shortcut.MainKey;
+            if (key == KeyCode.None || !UnityInput.Current.GetKeyDown(key)) return false;
+            foreach (KeyCode modifier in shortcut.Modifiers)
+                if (!UnityInput.Current.GetKey(modifier)) return false;
             return true;
         }
 
@@ -175,6 +192,22 @@ namespace BetterFirstPerson
             if (Session != null) FirstPersonVisuals.AfterModelMaterialsUpdated(self);
         }
 
+        // every model runs this every frame: one reference check for the others
+        private static void UpdateOverlays(On.RoR2.CharacterModel.orig_UpdateOverlays orig, CharacterModel self)
+        {
+            orig(self);
+            FirstPersonSession session = Session;
+            if (session != null && ReferenceEquals(self, session.CharacterModel) && Settings.HideOwnBursts.Value)
+                FirstPersonVisuals.StripOverlays(self);
+        }
+
+        private static void SkillExecuted(On.RoR2.GenericSkill.orig_OnExecute orig, GenericSkill self)
+        {
+            orig(self);
+            FirstPersonSession session = Session;
+            if (session != null && ReferenceEquals(self.characterBody, session.Body)) FirstPersonVisuals.OnSkillExecuted(self);
+        }
+
         // Vanilla turns the body to the aim only while shooting. In first person it always faces the view, so
         // walking backwards plays the backpedal animation instead of turning the body (and its back) around.
         private static void HandleMovements(On.EntityStates.GenericCharacterMain.orig_HandleMovements orig, GenericCharacterMain self)
@@ -191,19 +224,21 @@ namespace BetterFirstPerson
             aim.y = 0f;
             if (aim.sqrMagnitude < 0.0001f) return;
             direction.moveVector = aim.normalized;
-            // no turning lag either: the back never swings into view
-            direction.forward = aim;
+            // the turn itself happens every frame in SnapBodyYaw, with that frame's view: turning here, on the
+            // physics step, would pull the body back to the view of a frame or two ago and make it stutter
             lastSteerTime = Time.fixedTime;
         }
 
         // Per frame, with this frame's view: keep the body exactly under the camera. Only while the main
-        // movement state steers it, so skills that turn the body keep control.
-        internal static void SnapBodyYaw(FirstPersonSession session, float yaw)
+        // movement state steers it, so skills that turn the body keep control. True when the body was turned.
+        internal static bool SnapBodyYaw(FirstPersonSession session, float yaw)
         {
-            if (Settings.BodyRotation.Value != BodyTurning.FollowCamera) return;
-            if (Time.fixedTime - lastSteerTime > Time.fixedDeltaTime * 2f) return;
+            if (Settings.BodyRotation.Value != BodyTurning.FollowCamera) return false;
+            if (Time.fixedTime - lastSteerTime > Time.fixedDeltaTime * 2f) return false;
             CharacterDirection direction = session.Body ? session.Body.characterDirection : null;
-            if (direction) direction.yaw = yaw;
+            if (!direction) return false;
+            direction.yaw = yaw;
+            return true;
         }
     }
 }

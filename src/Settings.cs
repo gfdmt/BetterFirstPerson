@@ -51,6 +51,9 @@ namespace BetterFirstPerson
         public static ConfigEntry<float> FadeStart;
         public static ConfigEntry<float> FadeFull;
         public static ConfigEntry<float> MuzzleFlashSize;
+        public static ConfigEntry<bool> HideOwnBursts;
+        public static ConfigEntry<bool> HideBodyDuringSkills;
+        public static ConfigEntry<float> WeaponSway;
 
         private static ConfigFile config;
         // values read from the file that no entry has claimed yet: settings of earlier versions
@@ -108,22 +111,32 @@ namespace BetterFirstPerson
             MuzzleFlashSize = Bind(WeaponSection, "Own Muzzle Flash Size", 0.35f,
                 "Size of the muzzle flashes of your own weapons, which appear right in front of the camera. 1 = vanilla, 0 = hidden",
                 new AcceptableValueRange<float>(0f, 1f));
+            HideOwnBursts = Bind(WeaponSection, "Hide Bursts At Your Body", true,
+                "Hide effects that go off at the middle of your own body, like the flash of Huntress' blink, and flashes the game draws over your own model: in first person they would light up right in front of the eyes");
+            HideBodyDuringSkills = Bind(WeaponSection, "Hide Body During Skills", true,
+                "Hide your body and weapon while a skill plays an animation that moves the whole body (Huntress' Arrow Rain and glaive throw, Mercenary's dashes), so it doesn't pass through the camera. Primary attacks keep them visible");
+            WeaponSway = Bind(WeaponSection, "Weapon Sway", 1f,
+                "How much the arms and the weapon trail behind fast turns before settling back. 0 = fixed to the view, 1 = a few degrees",
+                new AcceptableValueRange<float>(0f, 2f));
 
             ModSettingsManager.SetModDescription("First person from your survivor's eyes. Press the First Person Key (O) in a run. Survivor settings are at the bottom: weapon lowering and camera height can be changed while playing.");
             ModSettingsManager.AddOption(new KeyBindOption(ToggleKey));
             ModSettingsManager.AddOption(new CheckBoxOption(RememberFirstPerson));
-            ModSettingsManager.AddOption(new SliderOption(FieldOfView, new SliderConfig { min = 60f, max = 150f, formatString = "{0:0}" }));
-            ModSettingsManager.AddOption(new SliderOption(SprintFovEffect, new SliderConfig { min = 0f, max = 1f, formatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new SliderOption(FieldOfView, new SliderConfig { min = 60f, max = 150f, FormatString = "{0:0}" }));
+            ModSettingsManager.AddOption(new SliderOption(SprintFovEffect, new SliderConfig { min = 0f, max = 1f, FormatString = "{0:0.00}" }));
             ModSettingsManager.AddOption(new ChoiceOption(BodyRotation));
             ModSettingsManager.AddOption(new CheckBoxOption(ThirdPersonWhileEmoting));
-            ModSettingsManager.AddOption(new SliderOption(ForwardOffset, new SliderConfig { min = 0f, max = 3f, formatString = "{0:0.00}" }));
-            ModSettingsManager.AddOption(new SliderOption(LookDownPush, new SliderConfig { min = 0f, max = 4f, formatString = "{0:0.00}" }));
-            ModSettingsManager.AddOption(new SliderOption(Stabilization, new SliderConfig { min = 0f, max = 1f, formatString = "{0:0.00}" }));
-            ModSettingsManager.AddOption(new SliderOption(NearClip, new SliderConfig { min = 0.01f, max = 0.5f, formatString = "{0:0.000}" }));
+            ModSettingsManager.AddOption(new SliderOption(ForwardOffset, new SliderConfig { min = 0f, max = 3f, FormatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new SliderOption(LookDownPush, new SliderConfig { min = 0f, max = 4f, FormatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new SliderOption(Stabilization, new SliderConfig { min = 0f, max = 1f, FormatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new SliderOption(NearClip, new SliderConfig { min = 0.01f, max = 0.5f, FormatString = "{0:0.000}" }));
             ModSettingsManager.AddOption(new CheckBoxOption(FadeWeapon));
-            ModSettingsManager.AddOption(new SliderOption(FadeStart, new SliderConfig { min = 0.05f, max = 1f, formatString = "{0:0.00}" }));
-            ModSettingsManager.AddOption(new SliderOption(FadeFull, new SliderConfig { min = 0.05f, max = 1f, formatString = "{0:0.00}" }));
-            ModSettingsManager.AddOption(new SliderOption(MuzzleFlashSize, new SliderConfig { min = 0f, max = 1f, formatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new SliderOption(FadeStart, new SliderConfig { min = 0.05f, max = 1f, FormatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new SliderOption(FadeFull, new SliderConfig { min = 0.05f, max = 1f, FormatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new SliderOption(MuzzleFlashSize, new SliderConfig { min = 0f, max = 1f, FormatString = "{0:0.00}" }));
+            ModSettingsManager.AddOption(new CheckBoxOption(HideOwnBursts));
+            ModSettingsManager.AddOption(new CheckBoxOption(HideBodyDuringSkills));
+            ModSettingsManager.AddOption(new SliderOption(WeaponSway, new SliderConfig { min = 0f, max = 2f, FormatString = "{0:0.00}" }));
 
             // settings earlier versions had in these sections and that are gone now
             Forget(definition => definition.Section == GeneralSection || definition.Section == CameraSection || definition.Section == WeaponSection);
@@ -163,8 +176,8 @@ namespace BetterFirstPerson
                         new AcceptableValueRange<float>(-20f, 40f)));
                     settings.HeadPath = config.Bind(SurvivorSection, label + " Head Path", "",
                         "Advanced, for survivors whose head is not found: path inside the model to the object to look out of. Empty = found automatically");
-                    ModSettingsManager.AddOption(new SliderOption(settings.WeaponLowering, new SliderConfig { min = 0f, max = 45f, formatString = "{0:0}" }));
-                    ModSettingsManager.AddOption(new SliderOption(settings.CameraHeight, new SliderConfig { min = -20f, max = 40f, formatString = "{0:0}" }));
+                    ModSettingsManager.AddOption(new SliderOption(settings.WeaponLowering, new SliderConfig { min = 0f, max = 45f, FormatString = "{0:0}" }));
+                    ModSettingsManager.AddOption(new SliderOption(settings.CameraHeight, new SliderConfig { min = -20f, max = 40f, FormatString = "{0:0}" }));
                     ModSettingsManager.AddOption(new StringInputFieldOption(settings.HeadPath));
                     survivors[prefab.name] = settings;
                 }

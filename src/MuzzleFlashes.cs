@@ -6,11 +6,15 @@ using UnityEngine;
 namespace BetterFirstPerson
 {
     // The player's own muzzle flashes appear right in front of the camera in first person; they are shrunk
-    // (or hidden) there. EffectComponent.Reset runs on an effect's first spawn and every time a pooled
-    // effect is reused: the change is undone before the game sets the effect up for its new use, and
-    // decided again for that use.
+    // (or hidden) there. Bursts that go off at the middle of the player's body (Huntress' blink) would fill
+    // the view from inside; they are hidden. EffectComponent.Reset runs on an effect's first spawn and every
+    // time a pooled effect is reused: the change is undone before the game sets the effect up for its new
+    // use, and decided again for that use.
     internal static class MuzzleFlashes
     {
+        // how close to the middle of the body or the head a burst goes off, in meters
+        private const float BurstReach = 0.3f;
+
         internal static int adjustedCount;
         private static readonly Dictionary<int, bool> muzzleChildren = new Dictionary<int, bool>();
         private static FirstPersonSession cachedFor;
@@ -30,13 +34,48 @@ namespace BetterFirstPerson
             }
             orig(self);
             FirstPersonSession session = FirstPersonController.Session;
-            if (session == null || !IsOwnMuzzleFlash(session, self)) return;
-            float size = Mathf.Clamp01(Settings.MuzzleFlashSize.Value);
-            if (size >= 0.999f) return;
-            if (!adjustment) adjustment = self.GetComponent<MuzzleFlashAdjustment>();
-            if (!adjustment) adjustment = self.gameObject.AddComponent<MuzzleFlashAdjustment>();
-            if (size <= 0.001f) adjustment.Hide();
-            else adjustment.Shrink(size);
+            if (session == null) return;
+            if (IsOwnMuzzleFlash(session, self))
+            {
+                float size = Mathf.Clamp01(Settings.MuzzleFlashSize.Value);
+                if (size >= 0.999f) return;
+                adjustment = Adjustment(self, adjustment);
+                if (size <= 0.001f) adjustment.Hide();
+                else adjustment.Shrink(size);
+            }
+            else if (Settings.HideOwnBursts.Value && IsBurstAtBody(session, self))
+            {
+                Adjustment(self, adjustment).Hide();
+                FirstPersonVisuals.CountBurst();
+            }
+        }
+
+        private static MuzzleFlashAdjustment Adjustment(EffectComponent effect, MuzzleFlashAdjustment known)
+        {
+            if (known) return known;
+            MuzzleFlashAdjustment adjustment = effect.GetComponent<MuzzleFlashAdjustment>();
+            return adjustment ? adjustment : effect.gameObject.AddComponent<MuzzleFlashAdjustment>();
+        }
+
+        // set off in the middle of the body (its center or its core: Huntress' special blinks from one, her
+        // utility from the other) or at the head, by the player's own skills or nobody in particular; effects
+        // that belong to something else, or hits on the body's surface, stay
+        private static bool IsBurstAtBody(FirstPersonSession session, EffectComponent effect)
+        {
+            EffectData data = effect.effectData;
+            CharacterBody body = session.Body;
+            if (data == null || !body) return false;
+            GameObject root = data.rootObject;
+            if (root && !ReferenceEquals(root, session.BodyObject)) return false;
+            Vector3 position = effect.transform.position;
+            if (Near(position, body.corePosition) || Near(position, session.BodyObject.transform.position)) return true;
+            HeadAnchor head = session.Head;
+            return head != null && head.Transform && Near(position, head.Center);
+        }
+
+        private static bool Near(Vector3 a, Vector3 b)
+        {
+            return (a - b).sqrMagnitude < BurstReach * BurstReach;
         }
 
         private static bool IsOwnMuzzleFlash(FirstPersonSession session, EffectComponent effect)
